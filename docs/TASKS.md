@@ -31,4 +31,4 @@
 - [x] T20: Configure Gradle for Android Studio 2026 / JDK 25 and build debug APK
 - [x] T21: Add download button to native toolbar (extension bar)
 - [x] T22: Set custom app logo from user-provided image (all density buckets)
-- [~] T23: Push updates to GitHub and publish release with APK download link
+- [x] T23: Push updates to GitHub and publish release with APK download link
