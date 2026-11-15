@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.YTExtApp" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:statusBarColor">@color/youtube_red</item>
-        <item name="android:navigationBarColor">@color/background_light</item>
+    <!-- Launch theme for the pre-Compose window. It must match the Compose light
+         scheme, otherwise the first frame flashes the wrong colour before
+         setContent() draws.
+
+         `windowBackground` is what the activity window shows while the first frame is
+         being composed. API 31+ additionally paints a splash window, and that one uses
+         `windowSplashScreenBackground` — see values-v31/themes.xml. -->
+    <style name="Theme.YTExtApp.Base" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/background_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
+
+    <!-- The activity theme. The v31 variants add the splash-screen attributes; keeping
+         those in their own folder means the items above are shared by every API level
+         instead of being copied per qualifier. -->
+    <style name="Theme.YTExtApp" parent="Theme.YTExtApp.Base" />
 </resources>

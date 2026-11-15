@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night counterpart of the launch theme. Without this file the activity is
+         created with the light window background even in dark mode, which showed up
+         as a white splash (with invisible white status-bar icons) on every cold
+         start. Keep the colours in step with DarkColorScheme in Theme.kt. -->
+    <style name="Theme.YTExtApp.Base" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

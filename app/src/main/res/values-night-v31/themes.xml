@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night counterpart of values-v31/themes.xml. Without it the API 31+ splash is
+         transparent in dark mode too, which is what produced a black cold-start window
+         between the splash icon and the first Compose frame. -->
+    <style name="Theme.YTExtApp" parent="Theme.YTExtApp.Base">
+        <item name="android:windowSplashScreenBackground">@color/background_dark</item>
+    </style>
+</resources>

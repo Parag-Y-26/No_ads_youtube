@@ -3,43 +3,50 @@
 (function() {
     'use strict';
 
-    // Override document.visibilityState to always report 'visible'
-    Object.defineProperty(document, 'visibilityState', {
-        get: function() { return 'visible'; },
-        configurable: true,
+    // Idempotent guard: the script is re-evaluated on SPA transitions, and the
+    // listeners below must be bound exactly once.
+    if (window.__ytExtBackgroundPlaybackLoaded) return;
+    window.__ytExtBackgroundPlaybackLoaded = true;
+
+    // The getters are plain data properties, so re-applying them is harmless and
+    // lets us repair the state after a transition.
+    function forceVisible() {
+        Object.defineProperty(document, 'visibilityState', {
+            get: () => 'visible',
+            configurable: true,
+        });
+
+        Object.defineProperty(document, 'hidden', {
+            get: () => false,
+            configurable: true,
+        });
+
+        // Older WebView builds still expose the webkit-prefixed variant.
+        Object.defineProperty(document, 'webkitHidden', {
+            get: () => false,
+            configurable: true,
+        });
+    }
+
+    forceVisible();
+
+    // Kill the event itself, not just the getters. Registered in the capture phase on
+    // `window`, which is the very first stop on the propagation path, so the event is
+    // stopped before any of YouTube's handlers (bubble or capture, on document or the
+    // player element) can observe that the page was hidden.
+    function stopVisibilityEvent(event) {
+        event.stopImmediatePropagation();
+    }
+
+    ['visibilitychange', 'webkitvisibilitychange'].forEach((eventName) => {
+        window.addEventListener(eventName, stopVisibilityEvent, true);
+        document.addEventListener(eventName, stopVisibilityEvent, true);
     });
 
-    // Override document.hidden to always report false
-    Object.defineProperty(document, 'hidden', {
-        get: function() { return false; },
-        configurable: true,
+    // Re-assert the getters if the SPA swapped the document state back to hidden.
+    ['yt-navigate-finish', 'state-navigateend'].forEach((eventName) => {
+        window.addEventListener(eventName, forceVisible);
     });
-
-    // Override document.webkitHidden for older WebView
-    Object.defineProperty(document, 'webkitHidden', {
-        get: function() { return false; },
-        configurable: true,
-    });
-
-    // Block visibilitychange events
-    const originalAddEventListener = document.addEventListener;
-    document.addEventListener = function(type, listener, options) {
-        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
-            // Don't register the listener — this prevents YouTube from
-            // detecting that the tab/app has been backgrounded
-            return;
-        }
-        return originalAddEventListener.call(this, type, listener, options);
-    };
-
-    // Also prevent pause caused by the Page Lifecycle API
-    const originalDispatchEvent = document.dispatchEvent;
-    document.dispatchEvent = function(event) {
-        if (event.type === 'visibilitychange' || event.type === 'webkitvisibilitychange') {
-            return false;
-        }
-        return originalDispatchEvent.call(this, event);
-    };
 
     console.log('[YTExt] Background playback override initialized');
 })();

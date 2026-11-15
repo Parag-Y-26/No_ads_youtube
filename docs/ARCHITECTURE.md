@@ -21,8 +21,14 @@ app/src/main/
 │   ├── ui/
 │   │   ├── MainScreen.kt            # Main Compose screen
 │   │   ├── SettingsSheet.kt         # Bottom sheet settings
+│   │   ├── DownloadBottomSheet.kt   # Video download options sheet
 │   │   └── theme/
 │   │       └── Theme.kt             # Material 3 theme
+│   ├── download/
+│   │   ├── DownloadBridge.kt        # JS interface for video download requests
+│   │   ├── DownloadConfig.kt        # Container format & quality settings
+│   │   ├── MediaStoreHelper.kt      # Scoped storage video persistence
+│   │   └── VideoDownloadManager.kt  # Download queue and notifications
 │   ├── webview/
 │   │   ├── YouTubeWebView.kt        # WebView composable wrapper
 │   │   ├── WebViewConfig.kt         # WebView setup & settings
@@ -39,6 +45,8 @@ app/src/main/
 ├── assets/
 │   └── js/
 │       ├── adblock.js               # Ad blocking script
+│       ├── background_playback.js   # Background playback keepalive
+│       ├── download_button.js       # In-page download button injector
 │       └── sponsorblock.js          # SponsorBlock script
 └── res/
     └── ...

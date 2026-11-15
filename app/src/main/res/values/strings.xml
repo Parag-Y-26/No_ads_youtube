@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">YT Ext</string>
+    <string name="app_name">No_ads_Tube</string>
     <string name="settings_title">Settings</string>
     <string name="toggle_ad_block">Ad Blocker</string>
     <string name="toggle_sponsorblock">SponsorBlock</string>
@@ -11,10 +11,25 @@
     <string name="btn_reload">Reload</string>
     <string name="btn_settings">Settings</string>
     <string name="btn_desktop_toggle">Toggle Desktop Mode</string>
+    <string name="btn_download">Download</string>
     <string name="notification_channel_name">Background Playback</string>
     <string name="notification_channel_desc">Keeps audio playing in the background</string>
     <string name="notification_title">YT Ext — Playing in background</string>
     <string name="notification_text">Tap to return to the app</string>
     <string name="sponsorblock_skipped">Skipped sponsor segment</string>
+    <string name="notification_permission_denied">Notification permission is needed to show the background playback controls</string>
+    <string name="action_play">Play</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_next">Next</string>
     <string name="youtube_url">https://m.youtube.com</string>
+
+    <!-- Download -->
+    <string name="download_format_label">Container Format</string>
+    <string name="download_quality_label">Quality</string>
+    <string name="format_mp4">MP4</string>
+    <string name="format_mkv">MKV</string>
+    <string name="btn_save_to_device">Save to Device</string>
+    <string name="btn_external_downloader">External Downloader</string>
+    <string name="download_notification_channel">YT Ext Downloads</string>
+    <string name="download_notification_channel_desc">Progress notifications for video downloads</string>
 </resources>

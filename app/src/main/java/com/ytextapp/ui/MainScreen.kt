@@ -1,5 +1,6 @@
 package com.ytextapp.ui
 
+import android.content.Intent
 import android.view.View
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -43,6 +45,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ytextapp.R
+import com.ytextapp.download.ContainerFormat
+import com.ytextapp.download.DownloadRequest
+import com.ytextapp.download.VideoDownloadManager
 import com.ytextapp.webview.YouTubeWebView
 import kotlinx.coroutines.launch
 
@@ -64,6 +69,60 @@ fun MainScreen(
     var showSettings by remember { mutableStateOf(false) }
     var fullscreenView by remember { mutableStateOf<View?>(null) }
     val sheetState = rememberModalBottomSheetState()
+
+    // Download bottom sheet state
+    var pendingDownloadRequest by remember { mutableStateOf<DownloadRequest?>(null) }
+
+    // Handle download request from WebView bridge
+    fun handleDownloadRequest(request: DownloadRequest) {
+        android.util.Log.d("YTExtMainScreen", "handleDownloadRequest called: $request")
+        pendingDownloadRequest = request
+    }
+
+    // Handle save to device (direct download)
+    fun handleSaveClick(format: ContainerFormat, quality: String) {
+        pendingDownloadRequest?.let { request ->
+            val updatedRequest = request.copy(format = format, quality = quality)
+            val downloadManager = VideoDownloadManager.getInstance(context)
+            downloadManager.startDirectDownload(updatedRequest, request.url)
+        }
+        pendingDownloadRequest = null
+    }
+
+    // Handle external downloader
+    fun handleExternalClick() {
+        pendingDownloadRequest?.let { request ->
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, request.url)
+            }
+            val chooser = Intent.createChooser(
+                intent,
+                context.getString(R.string.btn_external_downloader)
+            )
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        }
+        pendingDownloadRequest = null
+    }
+
+    // Handle progress request from long-press on download button
+    fun handleProgressRequest() {
+        android.util.Log.d("YTExtMainScreen", "handleProgressRequest called")
+        val downloadManager = VideoDownloadManager.getInstance(context)
+        // The progress is already shown via notification, but we could also
+        // show a toast or open the download sheet if not already open
+        if (pendingDownloadRequest != null) {
+            // Already showing the sheet, progress is in notification
+        } else {
+            // Show a toast indicating download is in progress
+            android.widget.Toast.makeText(
+                context,
+                "Download in progress - check notification bar",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Fullscreen video overlay
@@ -101,6 +160,30 @@ fun MainScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = {
+                            val wv = webViewState.value ?: return@IconButton
+                            val pageUrl = wv.url ?: return@IconButton
+                            val pageTitle = wv.title
+                                ?.replace(" - YouTube", "")
+                                ?.trim()
+                                ?: "Video"
+                            val videoIdRegex = Regex("""(?:[?&]v=|shorts/|embed/|youtu\.be/)([a-zA-Z0-9_-]{11})""")
+                            val videoId = videoIdRegex.find(pageUrl)?.groupValues?.getOrNull(1) ?: ""
+                            handleDownloadRequest(
+                                DownloadRequest(
+                                    videoId = videoId,
+                                    url = pageUrl,
+                                    title = pageTitle,
+                                    format = ContainerFormat.MP4,
+                                    quality = "720p",
+                                )
+                            )
+                        }) {
+                            Icon(
+                                Icons.Filled.FileDownload,
+                                contentDescription = stringResource(R.string.btn_download),
+                            )
+                        }
                         IconButton(onClick = { webViewState.value?.reload() }) {
                             Icon(
                                 Icons.Filled.Refresh,
@@ -135,6 +218,8 @@ fun MainScreen(
                     coroutineScope = coroutineScope,
                     webViewState = webViewState,
                     onFullscreenChanged = { view -> fullscreenView = view },
+                    onDownloadRequested = ::handleDownloadRequest,
+                    onProgressRequested = ::handleProgressRequest,
                 )
             }
         }
@@ -156,6 +241,16 @@ fun MainScreen(
                     onDesktopModeChanged = onDesktopModeChanged,
                 )
             }
+        }
+
+        // Download bottom sheet
+        pendingDownloadRequest?.let { request ->
+            DownloadBottomSheet(
+                request = request,
+                onDismissRequest = { pendingDownloadRequest = null },
+                onSaveClick = ::handleSaveClick,
+                onExternalClick = ::handleExternalClick,
+            )
         }
     }
 }

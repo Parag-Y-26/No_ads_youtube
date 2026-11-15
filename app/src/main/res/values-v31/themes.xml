@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The platform Material themes leave `windowSplashScreenBackground` transparent,
+         so on a cold start the splash icon sits on whatever is behind the window — on
+         this device that is plain black, not the app background. Painting it with the
+         same colour as `windowBackground` makes the splash and the first Compose frame
+         look like one continuous screen. -->
+    <style name="Theme.YTExtApp" parent="Theme.YTExtApp.Base">
+        <item name="android:windowSplashScreenBackground">@color/background_light</item>
+    </style>
+</resources>
