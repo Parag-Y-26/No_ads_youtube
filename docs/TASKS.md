@@ -27,4 +27,4 @@
 - [x] T16: Preferences persistence with DataStore
 - [ ] T17: App icon and splash
 - [ ] T18: Build signed APK
-- [~] T19: Initialize git repository, add .gitignore/README, and push to GitHub (Parag-Y-26/No_ads_youtube)
+- [x] T19: Initialize git repository, add .gitignore/README, and push to GitHub (Parag-Y-26/No_ads_youtube)
