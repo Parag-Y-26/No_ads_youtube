@@ -25,6 +25,7 @@
 ## Phase 5: Settings & Polish
 - [x] T15: Settings bottom sheet (toggle features)
 - [x] T16: Preferences persistence with DataStore
-- [ ] T17: App icon and splash
+- [x] T17: App icon and splash
 - [ ] T18: Build signed APK
 - [x] T19: Initialize git repository, add .gitignore/README, and push to GitHub (Parag-Y-26/No_ads_youtube)
+- [x] T20: Configure Gradle for Android Studio 2026 / JDK 25 and build debug APK
