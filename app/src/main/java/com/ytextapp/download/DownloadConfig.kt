@@ -9,7 +9,8 @@ package com.ytextapp.download
 enum class ContainerFormat(val extension: String, val mimeType: String) {
 
     MP4("mp4", "video/mp4"),
-    MKV("mkv", "video/x-matroska");
+    MKV("mkv", "video/x-matroska"),
+    M4A("m4a", "audio/mp4");
 
     companion object {
         /**
@@ -39,4 +40,10 @@ data class DownloadRequest(
     val title: String,
     val format: ContainerFormat,
     val quality: String,
+    /**
+     * User agent of the InnerTube client that produced the media URL. googlevideo
+     * URLs can be bound to the resolving client, so the download must not switch to
+     * a different agent halfway through.
+     */
+    val mediaUserAgent: String = YouTubeStreamResolver.MEDIA_USER_AGENT,
 )

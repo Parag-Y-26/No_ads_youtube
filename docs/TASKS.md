@@ -32,3 +32,4 @@
 - [x] T21: Add download button to native toolbar (extension bar)
 - [x] T22: Set custom app logo from user-provided image (all density buckets)
 - [x] T23: Push updates to GitHub and publish release with APK download link
+- [~] T24: Push updates to GitHub and publish v1.1.0 release with updated APK

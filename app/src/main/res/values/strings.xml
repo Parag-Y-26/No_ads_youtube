@@ -2,6 +2,9 @@
 <resources>
     <string name="app_name">No_ads_Tube</string>
     <string name="settings_title">Settings</string>
+    <string name="settings_quick_controls">Quick controls</string>
+    <string name="settings_hint">Tip: drag the floating gear anywhere to move it out of the way. Your position is kept until the app restarts.</string>
+    <string name="action_desktop">Desktop</string>
     <string name="toggle_ad_block">Ad Blocker</string>
     <string name="toggle_sponsorblock">SponsorBlock</string>
     <string name="toggle_background_play">Background Playback</string>
@@ -14,7 +17,7 @@
     <string name="btn_download">Download</string>
     <string name="notification_channel_name">Background Playback</string>
     <string name="notification_channel_desc">Keeps audio playing in the background</string>
-    <string name="notification_title">YT Ext — Playing in background</string>
+    <string name="notification_title">No_ads_Tube — Playing in background</string>
     <string name="notification_text">Tap to return to the app</string>
     <string name="sponsorblock_skipped">Skipped sponsor segment</string>
     <string name="notification_permission_denied">Notification permission is needed to show the background playback controls</string>
@@ -24,12 +27,27 @@
     <string name="youtube_url">https://m.youtube.com</string>
 
     <!-- Download -->
+    <string name="common_close">Close</string>
+    <string name="download_sheet_title">Download video as</string>
+    <string name="download_section_music">Music</string>
+    <string name="download_section_video">Video</string>
+    <string name="download_more_formats">More formats</string>
+    <string name="download_fewer_formats">Fewer formats</string>
+    <string name="download_preparing">Finding available formats…</string>
+    <string name="download_unavailable">Download unavailable</string>
+    <string name="download_retry">Retry</string>
+    <string name="download_cta">Download</string>
+    <string name="download_in_progress">A download is already running</string>
+    <string name="download_start_failed">Could not start the download</string>
+    <string name="download_mux_note">High-quality videos are combined with audio automatically.</string>
+    <string name="download_source_youtube">YouTube</string>
+    <string name="download_source_youtube_author">YouTube · %1$s</string>
     <string name="download_format_label">Container Format</string>
     <string name="download_quality_label">Quality</string>
     <string name="format_mp4">MP4</string>
     <string name="format_mkv">MKV</string>
     <string name="btn_save_to_device">Save to Device</string>
     <string name="btn_external_downloader">External Downloader</string>
-    <string name="download_notification_channel">YT Ext Downloads</string>
+    <string name="download_notification_channel">No_ads_Tube Downloads</string>
     <string name="download_notification_channel_desc">Progress notifications for video downloads</string>
 </resources>

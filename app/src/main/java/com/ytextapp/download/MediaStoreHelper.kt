@@ -47,7 +47,8 @@ object MediaStoreHelper {
     private val INVALID_FILE_NAME_CHARS = Regex("""[\\/:*?"<>|\p{Cntrl}]""")
     private val WHITESPACE = Regex("""\s+""")
 
-    private val RELATIVE_PATH = "${Environment.DIRECTORY_MOVIES}/$ALBUM_NAME"
+    private val RELATIVE_PATH_MOVIES = "${Environment.DIRECTORY_MOVIES}/$ALBUM_NAME"
+    private val RELATIVE_PATH_MUSIC = "${Environment.DIRECTORY_MUSIC}/$ALBUM_NAME"
 
     /**
      * A destination that is still being written.
@@ -62,6 +63,8 @@ object MediaStoreHelper {
         private val resolver: ContentResolver,
         /** Non-null only on API 26–28, where no MediaStore row exists yet. */
         private val legacyFile: File?,
+        /** Audio rows need the Audio collection and its own pending flag. */
+        private val isAudio: Boolean,
     ) {
 
         /**
@@ -101,7 +104,11 @@ object MediaStoreHelper {
         @RequiresApi(Build.VERSION_CODES.Q)
         private fun clearPendingFlag() {
             val values = ContentValues().apply {
-                put(MediaStore.Video.Media.IS_PENDING, 0)
+                if (isAudio) {
+                    put(MediaStore.Audio.Media.IS_PENDING, 0)
+                } else {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }
             }
             resolver.update(uri, values, null, null)
         }
@@ -119,7 +126,7 @@ object MediaStoreHelper {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             createWithMediaStore(context, request, displayName)
         } else {
-            createLegacyFile(context, displayName)
+            createLegacyFile(context, request, displayName)
         }
     }
 
@@ -151,17 +158,28 @@ object MediaStoreHelper {
         displayName: String,
     ): PendingVideo {
         val resolver = context.contentResolver
+        val isAudio = request.format == ContainerFormat.M4A
         val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Video.Media.MIME_TYPE, request.format.mimeType)
-            put(MediaStore.Video.Media.RELATIVE_PATH, RELATIVE_PATH)
-            // Hides the row from other apps until the last byte has been written.
-            put(MediaStore.Video.Media.IS_PENDING, 1)
+            if (isAudio) {
+                put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Audio.Media.MIME_TYPE, request.format.mimeType)
+                put(MediaStore.Audio.Media.RELATIVE_PATH, RELATIVE_PATH_MUSIC)
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+                put(MediaStore.Audio.Media.IS_MUSIC, 1)
+            } else {
+                put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Video.Media.MIME_TYPE, request.format.mimeType)
+                put(MediaStore.Video.Media.RELATIVE_PATH, RELATIVE_PATH_MOVIES)
+                // Hides the row from other apps until the last byte has been written.
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
         }
 
-        val collection = MediaStore.Video.Media.getContentUri(
-            MediaStore.VOLUME_EXTERNAL_PRIMARY
-        )
+        val collection = if (isAudio) {
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        }
         val uri = resolver.insert(collection, values)
             ?: throw IOException("MediaStore refused to create $displayName")
 
@@ -171,6 +189,7 @@ object MediaStoreHelper {
             context = context.applicationContext,
             resolver = resolver,
             legacyFile = null,
+            isAudio = isAudio,
         )
     }
 
@@ -180,11 +199,16 @@ object MediaStoreHelper {
      * at [PendingVideo.complete] time.
      */
     @Suppress("DEPRECATION")
-    private fun createLegacyFile(context: Context, displayName: String): PendingVideo {
-        val movies = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_MOVIES
+    private fun createLegacyFile(
+        context: Context,
+        request: DownloadRequest,
+        displayName: String,
+    ): PendingVideo {
+        val isAudio = request.format == ContainerFormat.M4A
+        val publicDir = Environment.getExternalStoragePublicDirectory(
+            if (isAudio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_MOVIES
         )
-        val album = File(movies, ALBUM_NAME)
+        val album = File(publicDir, ALBUM_NAME)
         if (!album.isDirectory && !album.mkdirs()) {
             throw IOException("Cannot create ${album.absolutePath}")
         }
@@ -197,6 +221,7 @@ object MediaStoreHelper {
             context = context.applicationContext,
             resolver = context.contentResolver,
             legacyFile = file,
+            isAudio = isAudio,
         )
     }
 

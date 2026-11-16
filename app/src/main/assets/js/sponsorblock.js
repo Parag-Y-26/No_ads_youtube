@@ -125,6 +125,10 @@
         },
 
         checkAndSkip: function() {
+            // The script is always present; the toggle only flips this flag, so the
+            // switch takes effect without reloading the page.
+            if (window.__ytExtConfig && window.__ytExtConfig.sponsorBlock === false) return;
+
             const video = document.querySelector('video');
             if (!video || !video.duration || video.paused || video.ended) return;
 
@@ -178,6 +182,12 @@
             sb.resetForNavigation();
             sb.checkAndSkip();
         });
+    });
+
+    window.addEventListener('yt-ext-config', function() {
+        if (window.__ytExtConfig && window.__ytExtConfig.sponsorBlock === false) {
+            sb.clearOverlay();
+        }
     });
 
     console.log('[YTExt] SponsorBlock initialized');

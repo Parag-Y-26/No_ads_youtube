@@ -1,4 +1,4 @@
-# No Ads YouTube (YT Ext)
+# No_ads_Tube
 
 An Android application built with Kotlin and Jetpack Compose that loads YouTube Web in an enhanced WebView with built-in extensions and userscript support.
 

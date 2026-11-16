@@ -1,9 +1,11 @@
 package com.ytextapp
 
 import android.Manifest
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +33,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Debug builds expose the page to chrome://inspect / CDP. This is what makes
+        // WebView console errors and userscript behaviour inspectable without adding
+        // ad-hoc logging, and it stays off in release builds.
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
         preferencesManager = PreferencesManager(applicationContext)
 

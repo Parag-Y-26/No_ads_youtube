@@ -1,36 +1,47 @@
-// YT Ext — Comprehensive Ad Blocker Script
+// YT Ext — Smooth Ad Blocker
+//
+// The previous version re-seeked the ad video to its end every 250 ms. Every seek
+// made the player buffer, which is exactly the "video freezes after an ad" symptom.
+// This version:
+//   * fast-forwards the ad instead of seeking it (no buffer flush),
+//   * seeks at most once per ad, as a fallback,
+//   * observes only the player's class attribute instead of the whole document,
+//   * hides ad UI with CSS instead of deleting nodes the player owns.
 (function() {
     'use strict';
 
     // Idempotent guard. m.youtube.com re-evaluates injected scripts on the same
-    // document, so without this every SPA transition would stack another
-    // MutationObserver on top of the previous ones.
+    // document, so without this every SPA transition would stack another observer.
     if (window.__ytExtAdBlockLoaded) return;
     window.__ytExtAdBlockLoaded = true;
 
     const STYLE_ID = 'yt-ext-adblock-style';
     const PLAYER_SELECTOR = '#movie_player, .html5-video-player';
 
-    // Clicking one of these ends the ad cleanly; the player rebuilds them per ad, so
-    // they are looked up on every sweep rather than cached.
+    // Clicking one of these ends the ad cleanly.
     const SKIP_BUTTON_SELECTORS = [
         '.ytp-ad-skip-button',
         '.ytp-ad-skip-button-modern',
         '.ytp-skip-ad-button',
     ];
 
-    // Coalesces bursts of mutations (an ad insertion changes dozens of nodes) into one
-    // sweep. A trailing throttle, not a polling loop.
-    const SWEEP_THROTTLE_MS = 120;
+    // Ads ignore normal playback-rate changes on some builds; re-apply while the
+    // ad class is present, but at a low frequency so it never competes with video
+    // rendering.
+    const AD_PLAYBACK_RATE = 16;
+    const RATE_REAPPLY_MS = 500;
+    const WATCH_INTERVAL_MS = 250;
+    const SEEK_FALLBACK_MS = 1800;
+    const ATTACH_INTERVAL_MS = 1500;
 
-    // While an ad is on screen the sweep re-arms itself: the skip button can appear a
-    // moment late and the ad player sometimes resets the playhead. This stops by itself
-    // on the first sweep that sees the ad gone — there is no standing interval.
-    const AD_RETRY_MS = 250;
-
-    // CSS to hide ad containers
+    // CSS to hide ad containers. `opacity: 0` on the ad video replaces the old
+    // `visibility: hidden`: it keeps the element in the render tree so the main
+    // video does not have to relayout when the ad ends.
     const adCSS = `
-        .ad-showing video { visibility: hidden !important; }
+        .html5-video-player.ad-showing video,
+        .html5-video-player.ad-interrupting video {
+            opacity: 0 !important;
+        }
         .ytp-ad-module,
         .ytp-ad-overlay-container,
         .ytp-ad-text-overlay,
@@ -64,8 +75,25 @@
         }
     `;
 
-    // Re-applied after navigation: a channel or search page can be swapped in
-    // without <head> surviving, and the rules would silently stop applying.
+    let enabled = true;
+    let observer = null;
+    let observedPlayer = null;
+    let attachInterval = null;
+    let watchTimer = null;
+
+    let mutedByUs = false;
+    let adActive = false;
+    let adStartedAt = 0;
+    let soughtThisAd = false;
+    let adPlaybackRateBefore = 1;
+    let lastRateAt = 0;
+
+    function isEnabled() {
+        const config = window.__ytExtConfig;
+        // Before the config object arrives, behave like the old default (enabled).
+        return !config || config.adBlock !== false;
+    }
+
     function ensureStyle() {
         if (document.getElementById(STYLE_ID)) return;
         const style = document.createElement('style');
@@ -74,25 +102,29 @@
         (document.head || document.documentElement).appendChild(style);
     }
 
-    ensureStyle();
+    function removeStyle() {
+        const style = document.getElementById(STYLE_ID);
+        if (style) style.remove();
+    }
 
-    function playerContainer() {
+    function playerElement() {
         return document.querySelector(PLAYER_SELECTOR);
     }
 
-    function adIsActive(player) {
-        return player.classList.contains('ad-showing') ||
-            player.classList.contains('ad-interrupting');
+    function videoElement() {
+        return document.querySelector('video');
+    }
+
+    function isAdShowing(player) {
+        return !!player && (player.classList.contains('ad-showing') ||
+            player.classList.contains('ad-interrupting'));
     }
 
     // --- audio ---------------------------------------------------------------
 
-    // Muting is not free to undo, and the player mirrors the element's mute state into
-    // its own: setting `video.muted` alone makes YouTube believe the *user* muted, and
-    // the next video then starts silent. The player API is used instead so the state it
-    // persists is restored as well.
-    let mutedByUs = false;
-
+    // Muting is not free to undo: setting `video.muted` alone makes YouTube believe
+    // the *user* muted, and the next video then starts silent. Use the player API
+    // when it exists so the persisted state is restored too.
     function playerApi() {
         const player = document.getElementById('movie_player');
         return player && typeof player.mute === 'function' ? player : null;
@@ -106,8 +138,6 @@
 
     function muteForAd(video) {
         if (mutedByUs) return;
-
-        // Only a mute this script applied is ever undone; a mute the user chose stays.
         if (isPlayerMuted(video)) return;
 
         mutedByUs = true;
@@ -125,12 +155,55 @@
         else if (video) video.muted = false;
     }
 
-    // --- ad handling ---------------------------------------------------------
+    // --- fast-forward ---------------------------------------------------------
+
+    function applyAdRate() {
+        const video = videoElement();
+        const player = playerApi();
+
+        if (video) {
+            try {
+                if (video.playbackRate !== AD_PLAYBACK_RATE) {
+                    video.playbackRate = AD_PLAYBACK_RATE;
+                }
+            } catch (_) {
+            }
+        }
+
+        if (player && typeof player.setPlaybackRate === 'function') {
+            try {
+                player.setPlaybackRate(AD_PLAYBACK_RATE);
+            } catch (_) {
+            }
+        }
+
+        lastRateAt = Date.now();
+    }
+
+    function restoreRate() {
+        const rate = adPlaybackRateBefore > 0 ? adPlaybackRateBefore : 1;
+        const video = videoElement();
+        const player = playerApi();
+
+        if (video) {
+            try {
+                video.playbackRate = rate;
+            } catch (_) {
+            }
+        }
+
+        if (player && typeof player.setPlaybackRate === 'function') {
+            try {
+                player.setPlaybackRate(rate);
+            } catch (_) {
+            }
+        }
+    }
 
     function clickSkipButton() {
         for (const selector of SKIP_BUTTON_SELECTORS) {
             const button = document.querySelector(selector);
-            if (button) {
+            if (button && !button.disabled) {
                 button.click();
                 return true;
             }
@@ -138,131 +211,186 @@
         return false;
     }
 
-    function seekPastAd(video) {
-        if (!video || !isFinite(video.duration) || video.duration <= 0) return;
-        // Leave the last few milliseconds alone: assigning the value that is already
-        // there fires nothing, while seeking backwards from the very end can re-enter.
-        if (video.currentTime < video.duration - 0.05) {
-            video.currentTime = video.duration;
+    // --- ad lifecycle ---------------------------------------------------------
+
+    function enterAd() {
+        if (adActive) return;
+
+        adActive = true;
+        adStartedAt = Date.now();
+        soughtThisAd = false;
+
+        const video = videoElement();
+        adPlaybackRateBefore =
+            video && video.playbackRate > 0 ? video.playbackRate : 1;
+
+        muteForAd(video);
+        applyAdRate();
+        clickSkipButton();
+        scheduleWatch(0);
+    }
+
+    function leaveAd() {
+        if (!adActive) return;
+
+        adActive = false;
+        if (watchTimer !== null) {
+            clearTimeout(watchTimer);
+            watchTimer = null;
         }
+
+        restoreAudio(videoElement());
+        restoreRate();
     }
 
-    // Remove ad overlay elements
-    function removeAdOverlays() {
-        const overlays = document.querySelectorAll(
-            '.ytp-ad-overlay-container, .ytp-ad-text-overlay, .ytp-ad-image-overlay'
-        );
-        overlays.forEach(function(el) { el.remove(); });
-    }
+    /**
+     * Runs only while an ad is on screen. It re-applies the fast-forward until the
+     * ad ends and falls back to a single seek for players that cap playbackRate.
+     * There is no standing interval after the ad disappears.
+     */
+    function watch() {
+        watchTimer = null;
 
-    function sweep() {
-        const player = playerContainer();
-        const video = document.querySelector('video');
-
-        if (!player || !adIsActive(player)) {
-            restoreAudio(video);
-            removeAdOverlays();
+        if (!enabled) {
+            leaveAd();
             return;
         }
 
-        muteForAd(video);
+        const player = playerElement();
+        if (!isAdShowing(player)) {
+            leaveAd();
+            return;
+        }
 
-        // Mute first so no ad audio escapes, then skip. Seeking to the end is what
-        // dismisses ads that do not offer a button yet; the click handles the rest.
-        seekPastAd(video);
+        if (!adActive) enterAd();
+
+        // The skip button can appear a moment after the ad class.
         clickSkipButton();
 
-        removeAdOverlays();
+        if (Date.now() - lastRateAt >= RATE_REAPPLY_MS) {
+            applyAdRate();
+        }
 
-        // Re-arm only while the ad is still there. The sweep that finds it gone
-        // returns above and leaves no timer behind.
-        scheduleSweep(AD_RETRY_MS);
+        const video = videoElement();
+        if (!soughtThisAd && video &&
+            isFinite(video.duration) && video.duration > 0 &&
+            Date.now() - adStartedAt >= SEEK_FALLBACK_MS &&
+            video.currentTime < video.duration - 0.5
+        ) {
+            soughtThisAd = true;
+            try {
+                video.currentTime = Math.max(0, video.duration - 0.1);
+            } catch (_) {
+            }
+        }
+
+        scheduleWatch(WATCH_INTERVAL_MS);
     }
 
-    let sweepTimer = null;
-
-    function scheduleSweep(delayMs) {
-        // A sweep is already queued and will re-read the world when it runs, so
-        // additional mutations inside the window are not worth another timer.
-        if (sweepTimer !== null) return;
-
-        sweepTimer = setTimeout(function() {
-            sweepTimer = null;
-            sweep();
-        }, delayMs === undefined ? SWEEP_THROTTLE_MS : delayMs);
+    function scheduleWatch(delayMs) {
+        if (watchTimer !== null || !adActive) return;
+        watchTimer = setTimeout(watch, delayMs);
     }
 
     // --- observers -----------------------------------------------------------
 
-    const playerObserver = new MutationObserver(function() {
-        scheduleSweep();
-    });
-
-    let observedPlayer = null;
-
-    function attachPlayerObserver() {
-        if (observedPlayer && observedPlayer.isConnected) return;
-
-        const player = playerContainer();
+    function attachObserver() {
+        const player = playerElement();
         if (!player) return;
+        if (observedPlayer === player && observer) return;
 
-        playerObserver.disconnect();
-        playerObserver.observe(player, {
+        if (observer) observer.disconnect();
+
+        // Only the player's class changes matter. Watching document.body with
+        // `subtree: true` fired on every comment, thumbnail and counter update and
+        // was a measurable source of dropped frames.
+        observer = new MutationObserver(function() {
+            if (!enabled) return;
+
+            const currentPlayer = playerElement();
+            if (isAdShowing(currentPlayer)) {
+                if (!adActive) enterAd();
+                scheduleWatch(0);
+            } else if (adActive) {
+                leaveAd();
+            }
+        });
+
+        observer.observe(player, {
             attributes: true,
             attributeFilter: ['class'],
-            // The skip button and the ad overlays are inserted inside the player.
-            childList: true,
-            subtree: true,
         });
         observedPlayer = player;
     }
 
-    // The player element survives most navigations, but not all of them, so the body
-    // is watched only to re-attach the player observer and to hide promoted nodes.
-    const rootObserver = new MutationObserver(function(mutations) {
-        attachPlayerObserver();
+    function startAttachInterval() {
+        if (attachInterval !== null) return;
 
-        for (const mutation of mutations) {
-            for (const node of mutation.addedNodes) {
-                if (node.nodeType !== Node.ELEMENT_NODE) continue;
-
-                if (node.tagName && (
-                    node.tagName.toLowerCase().includes('ad-slot') ||
-                    node.tagName.toLowerCase().includes('promoted')
-                )) {
-                    node.style.display = 'none';
-                }
-            }
-        }
-    });
-
-    let observedRoot = null;
-
-    function observeRoot() {
-        const root = document.body || document.documentElement;
-        if (!root || root === observedRoot) return;
-
-        rootObserver.disconnect();
-        rootObserver.observe(root, { childList: true, subtree: true });
-        observedRoot = root;
-        attachPlayerObserver();
+        // YouTube replaces the player element on some navigations. This cheap check
+        // re-binds the observer without a document-wide MutationObserver.
+        attachInterval = setInterval(function() {
+            if (!enabled) return;
+            if (observedPlayer && observedPlayer.isConnected) return;
+            attachObserver();
+        }, ATTACH_INTERVAL_MS);
     }
 
-    observeRoot();
+    function stopAttachInterval() {
+        if (attachInterval === null) return;
+        clearInterval(attachInterval);
+        attachInterval = null;
+    }
 
-    // Catch an ad that is already on screen when the script is injected.
-    scheduleSweep(0);
+    function shutdown() {
+        leaveAd();
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+        observedPlayer = null;
+        stopAttachInterval();
+        removeStyle();
+    }
 
-    // Bound once, thanks to the guard above. Re-runs the setup after each SPA
-    // transition instead of relying on a fresh script evaluation.
+    function startup() {
+        enabled = isEnabled();
+        if (!enabled) {
+            shutdown();
+            return;
+        }
+
+        ensureStyle();
+        attachObserver();
+        startAttachInterval();
+
+        const player = playerElement();
+        if (isAdShowing(player)) {
+            enterAd();
+            scheduleWatch(0);
+        }
+    }
+
+    // --- wiring --------------------------------------------------------------
+
+    window.addEventListener('yt-ext-config', function() {
+        const nextEnabled = isEnabled();
+        if (nextEnabled === enabled) return;
+
+        enabled = nextEnabled;
+        if (enabled) startup();
+        else shutdown();
+    });
+
+    // Re-applies the stylesheet and observer after an SPA transition.
     ['yt-navigate-finish', 'state-navigateend'].forEach(function(eventName) {
         window.addEventListener(eventName, function() {
+            if (!enabled) return;
             ensureStyle();
-            observeRoot();
-            attachPlayerObserver();
-            scheduleSweep(0);
+            attachObserver();
         });
     });
+
+    startup();
 
     console.log('[YTExt] Ad blocker initialized');
 })();

@@ -59,8 +59,11 @@ object AdBlocker {
         "/pagead/",
         "/get_video_info?",
         "/api/stats/ads",
+        "/api/stats/atr",
         "/ptracking",
         "/ad_data_204",
+        "/pcs/activeview",
+        "youtube.com/get_midroll_info",
         "youtube.com/api/stats/qoe?adformat",
     )
 

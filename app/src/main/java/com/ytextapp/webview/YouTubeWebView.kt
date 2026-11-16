@@ -13,9 +13,14 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -53,6 +58,14 @@ private class BackgroundPlaybackWebView(
     }
 }
 
+/** Userscripts are always injected; they read `window.__ytExtConfig` to decide what to do. */
+private val SCRIPT_ASSETS = listOf(
+    "js/adblock.js",
+    "js/sponsorblock.js",
+    "js/background_playback.js",
+    "js/download_button.js",
+)
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun YouTubeWebView(
@@ -67,6 +80,7 @@ fun YouTubeWebView(
     onFullscreenChanged: (View?) -> Unit,
     onDownloadRequested: (DownloadRequest) -> Unit,
     onProgressRequested: () -> Unit,
+    onNavigationStateChanged: (WebViewNavigationState) -> Unit = {},
 ) {
     val context = LocalContext.current
     val jsInjector = remember { JsInjector(context) }
@@ -81,6 +95,17 @@ fun YouTubeWebView(
     val adBlockState = rememberUpdatedState(adBlockEnabled)
     val sponsorBlockState = rememberUpdatedState(sponsorBlockEnabled)
     val backgroundPlayState = rememberUpdatedState(backgroundPlayEnabled)
+    val navStateCallback = rememberUpdatedState(onNavigationStateChanged)
+
+    // CanGoBack/CanGoForward are not observable; the callback below publishes them
+    // into Compose state so the system back gesture and the in-app buttons agree.
+    var canGoBack by remember { mutableStateOf(false) }
+
+    // YouTube's fullscreen player needs to be closed before WebView history when the
+    // user presses back, otherwise the navigation happens behind the fullscreen view.
+    var fullscreenCallback by remember {
+        mutableStateOf<WebChromeClient.CustomViewCallback?>(null)
+    }
 
     // Download bridge — created once, lives as long as the WebView.
     val downloadBridge = remember {
@@ -109,9 +134,6 @@ fun YouTubeWebView(
                 /** True once the userscripts have run in the current document. */
                 private var scriptsInjected = false
 
-                /** Feature flags as they were when the userscripts were last pushed. */
-                private var injectedFlags: List<Boolean>? = null
-
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
@@ -129,10 +151,11 @@ fun YouTubeWebView(
                     // A new document: every window-level flag set by the userscripts is
                     // gone, so the pipeline must run again even for the same video.
                     scriptsInjected = false
-                    injectedFlags = null
                     currentVideoId = null
                     sponsorBlockJob?.cancel()
                     sponsorBlockJob = null
+
+                    view?.let { publishNavigationState(it) }
                 }
 
                 override fun onPageFinished(view: WebView?, pageUrl: String?) {
@@ -141,6 +164,7 @@ fun YouTubeWebView(
 
                     injectScripts(view)
                     handleNavigation(view, pageUrl)
+                    publishNavigationState(view)
                 }
 
                 override fun doUpdateVisitedHistory(
@@ -154,77 +178,49 @@ fun YouTubeWebView(
                     // m.youtube.com navigates with history.pushState, which never fires
                     // onPageFinished — this is the only callback that sees the SPA
                     // transitions, so the video change has to be detected here.
-                    if (!scriptsInjected) return // still a full load; onPageFinished handles it
-
-                    // A toggle flipped after the document loaded cannot retroactively add
-                    // its script, so rebuild the pipeline whenever the live flags differ
-                    // from the ones it was built from. The scripts are idempotent, so
-                    // re-running the ones already present is a no-op.
-                    if (injectedFlags != currentFlags()) {
-                        injectScripts(view)
+                    if (scriptsInjected) {
+                        // Config is cheap to push and keeps rapid toggle changes in sync.
+                        jsInjector.updateConfig(view)
+                        notifyScriptsOfSpaNavigation(view)
+                        handleNavigation(view, url)
                     }
 
-                    notifyScriptsOfSpaNavigation(view)
-                    handleNavigation(view, url)
+                    publishNavigationState(view)
                 }
-
-                /** Snapshot of the feature flags the userscript pipeline depends on. */
-                private fun currentFlags(): List<Boolean> = listOf(
-                    adBlockState.value,
-                    sponsorBlockState.value,
-                    backgroundPlayState.value,
-                )
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
                     request: WebResourceRequest?
                 ): Boolean {
-                    val loadUrl = request?.url?.toString() ?: return false
-                    // Keep YouTube URLs in the WebView
-                    if (loadUrl.contains("youtube.com") || loadUrl.contains("youtu.be") ||
-                        loadUrl.contains("accounts.google.com")
-                    ) {
-                        return false
-                    }
-                    return false // Stay in WebView for all URLs
+                    // Stay in the WebView for every URL, including YouTube links.
+                    return false
                 }
 
                 /** Builds and pushes the userscript pipeline for the current document. */
                 private fun injectScripts(view: WebView) {
                     jsInjector.clearScripts()
 
-                    if (adBlockState.value) {
+                    // Every script is injected regardless of the toggles. The config
+                    // object is the single source of truth, so flipping a switch takes
+                    // effect instantly instead of waiting for the next full page load.
+                    for (assetPath in SCRIPT_ASSETS) {
                         try {
-                            jsInjector.addScript(jsInjector.loadAssetScript("js/adblock.js"))
-                        } catch (_: Exception) {}
+                            jsInjector.addScript(jsInjector.loadAssetScript(assetPath))
+                        } catch (_: Exception) {
+                        }
                     }
-
-                    if (sponsorBlockState.value) {
-                        try {
-                            jsInjector.addScript(jsInjector.loadAssetScript("js/sponsorblock.js"))
-                        } catch (_: Exception) {}
-                    }
-
-                    if (backgroundPlayState.value) {
-                        try {
-                            jsInjector.addScript(
-                                jsInjector.loadAssetScript("js/background_playback.js")
-                            )
-                        } catch (_: Exception) {}
-                    }
-
-                    // Download button is always injected (no preference toggle needed).
-                    try {
-                        jsInjector.addScript(jsInjector.loadAssetScript("js/download_button.js"))
-                    } catch (_: Exception) {}
 
                     for (script in userscriptManager.getScripts()) {
                         jsInjector.addScript(script)
                     }
 
+                    jsInjector.setConfig(
+                        adBlockEnabled = adBlockState.value,
+                        sponsorBlockEnabled = sponsorBlockState.value,
+                        backgroundPlayEnabled = backgroundPlayState.value,
+                    )
                     jsInjector.injectAll(view)
                     scriptsInjected = true
-                    injectedFlags = currentFlags()
                 }
 
                 /** Re-fetches SponsorBlock data, but only when the video actually changed. */
@@ -261,15 +257,44 @@ fun YouTubeWebView(
                         "window.dispatchEvent(new Event('state-navigateend'));",
                     )
                 }
+
+                private fun publishNavigationState(view: WebView) {
+                    val canBack = view.canGoBack()
+                    canGoBack = canBack
+                    navStateCallback.value(
+                        WebViewNavigationState(
+                            canGoBack = canBack,
+                            canGoForward = view.canGoForward(),
+                            url = view.url,
+                            title = view.title,
+                        )
+                    )
+                }
             }
 
             webChromeClient = object : WebChromeClient() {
                 override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                    fullscreenCallback = callback
                     onFullscreenChanged(view)
                 }
 
                 override fun onHideCustomView() {
+                    fullscreenCallback = null
                     onFullscreenChanged(null)
+                }
+
+                override fun onReceivedTitle(view: WebView?, title: String?) {
+                    super.onReceivedTitle(view, title)
+                    view?.let {
+                        navStateCallback.value(
+                            WebViewNavigationState(
+                                canGoBack = it.canGoBack(),
+                                canGoForward = it.canGoForward(),
+                                url = it.url,
+                                title = title ?: it.title,
+                            )
+                        )
+                    }
                 }
             }
 
@@ -281,21 +306,61 @@ fun YouTubeWebView(
     // MediaStyle notification.
     DisposableEffect(webView) {
         BackgroundPlaybackService.attachWebView(webView)
-        onDispose { BackgroundPlaybackService.detachWebView(webView) }
+        onDispose {
+            BackgroundPlaybackService.detachWebView(webView)
+            if (webViewState.value === webView) webViewState.value = null
+            webView.stopLoading()
+            webView.removeAllViews()
+            webView.destroy()
+        }
     }
 
-    // Update the state so parent can access the WebView
-    webViewState.value = webView
-
-    // Handle desktop mode changes
-    DisposableEffect(desktopMode) {
-        WebViewConfig.setDesktopMode(webView, desktopMode)
-        onDispose {}
+    // Publish the instance to the parent after composition instead of writing state
+    // during composition.
+    SideEffect {
+        webViewState.value = webView
     }
 
-    // Handle back press — go back in web history
-    BackHandler(enabled = webView.canGoBack()) {
-        webView.goBack()
+    // Toggles are applied to the live document; no reload required.
+    LaunchedEffect(adBlockEnabled, sponsorBlockEnabled, backgroundPlayEnabled) {
+        jsInjector.setConfig(adBlockEnabled, sponsorBlockEnabled, backgroundPlayEnabled)
+        jsInjector.updateConfig(webView)
+    }
+
+    // Turning SponsorBlock on while a video is already open must fetch the segments
+    // for that video; the normal fetch only runs on a page transition.
+    LaunchedEffect(sponsorBlockEnabled) {
+        if (!sponsorBlockEnabled) return@LaunchedEffect
+        val videoId = webView.url?.let { SponsorBlockClient.extractVideoId(it) }
+            ?: return@LaunchedEffect
+        sponsorBlockInjector.loadSegments(webView, videoId, coroutineScope)
+    }
+
+    // The user agent only applies to the next document, so apply the change and
+    // navigate once (not on the initial composition).
+    val appliedDesktopMode = remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(desktopMode) {
+        val previous = appliedDesktopMode.value
+        appliedDesktopMode.value = desktopMode
+        if (previous != null && previous != desktopMode) {
+            WebViewConfig.setDesktopMode(webView, desktopMode)
+            val targetUrl = WebViewConfig.youtubeUrlForMode(webView.url, desktopMode)
+            if (targetUrl == webView.url) webView.reload() else webView.loadUrl(targetUrl)
+        }
+    }
+
+    // Handle back press — close the fullscreen player first, otherwise go back in
+    // web history. Reading canGoBack() directly in the enabled parameter would
+    // freeze the state at the first composition.
+    BackHandler(enabled = canGoBack || fullscreenCallback != null) {
+        val callback = fullscreenCallback
+        if (callback != null) {
+            fullscreenCallback = null
+            callback.onCustomViewHidden()
+            onFullscreenChanged(null)
+        } else {
+            webView.goBack()
+        }
     }
 
     AndroidView(
